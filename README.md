@@ -33,7 +33,7 @@ python3 main.py 2023-1 2022-2 > stdout.txt 2> stderr.txt
 ```
 
 El resultado del scraper se condensa en un JSON en la ultima linea de `stdout.txt`.
-Se puede extraer esta ultima linea a un archivo aislado usando el script `get-json.py`.
+Se puede extraer esta ultima linea a un archivo aislado usando el script `scripts/get-json.py`.
 
 ### Scrapear Catálogo UC
 
@@ -49,22 +49,38 @@ python3 main.py catalogo > stdout.txt 2> stderr.txt
 ```
 
 El resultado del scraper se condensa en un JSON en la ultima linea de `stdout.txt`.
-Se puede extraer esta ultima linea a un archivo aislado usando el script `get-json.py`.
+Se puede extraer esta ultima linea a un archivo aislado usando el script `scripts/get-json.py`.
 
 ### Juntar resultados de varios scrapeos
 
-El script `make-universal.py` permite agregar los resultados de varios scrapeos en una mega base de datos.
+El script `scripts/make-universal.py` permite agregar los resultados de varios scrapeos en una mega base de datos.
 En particular, permite agrupar scrapeos de buscacursos y de catálogo UC en un mismo `.json` universal.
 
 Por ejemplo, para juntar los datos de un scrapeo de catalogo y 2 scrapeos de buscacursos:
 
 ```bash
-python3 make-universal.py catalogo.json buscacursos-1.json buscacursos-2.json
+python3 scripts/make-universal.py catalogo.json buscacursos-1.json buscacursos-2.json
 ```
 
 El script autodetecta si los `.json` son informacion de buscacursos o de catalogo.
 Debe haber exactamente 1 `.json` de Catálogo UC.
 Debe haber al menos 1 `.json` de Buscacursos, ya que se usa para suplir la información que Catálogo no provee.
+
+### Exportar la base SQLite a JSON o CSV
+
+Para exportar la base `scraper_data.sqlite` a JSON (todas las tablas en un archivo):
+
+```bash
+python3 scripts/export-db.py scraper_data.sqlite --format json --output dump.json
+```
+
+Para exportar la base a CSV (un archivo por tabla dentro de una carpeta):
+
+```bash
+python3 scripts/export-db.py scraper_data.sqlite --format csv --output dump_csv
+```
+
+También puedes exportar una sola tabla con `--table`.
 
 ### Detalles importantes
 

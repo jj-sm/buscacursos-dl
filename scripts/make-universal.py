@@ -20,7 +20,7 @@ for i in reversed(range(len(args))):
         args.pop(i)
 
 if not args:
-    log("usage: python3 make-universal.py [options] <JSON data files...>")
+    log("usage: python3 scripts/make-universal.py [options] <JSON data files...>")
     log("  --strip-program    Remove course program descriptions.")
     log("  --compress         Compress the resulting JSON using LZMA.")
     log("  There must be exactly 1 catalogo file and 1+ buscacurso files.")
