@@ -7,6 +7,16 @@ from typing import List, Dict, Tuple, Union, Optional
 log = logging.getLogger("scraper")
 
 
+def _is_security_verification_page(resp: str) -> bool:
+    markers = [
+        "Verificación de Seguridad",
+        "challenge-container",
+        "loading-spinner",
+        "Pontificia Universidad Católica de Chile",
+    ]
+    return all(m in resp for m in markers[:2]) or markers[0] in resp
+
+
 class _BCParser(HTMLParser):
     toogle: bool
     nested: int
@@ -119,11 +129,28 @@ def bc_search(cfg, query: str, period: str, nrc: bool = False):
         url = f"https://buscacursos.uc.cl/?cxml_semestre={period}&cxml_sigla={query}"
     resp = get_text(cfg, url)
 
+    if _is_security_verification_page(resp):
+        raise RuntimeError(
+            "Buscacursos returned a security verification page instead of course data. "
+            "Use valid browser cookies in .cred or run from an environment/IP that passes the challenge."
+        )
+
     # Check valid response
     if len(resp) < 1000:
-        log.warn("Too many request prevention")
+        log.warning("Too many request prevention - response too small")
         sleep(5)
         resp = get_text(cfg, url)
 
     parser.feed(resp)
+
+    if len(parser.courses) == 0:
+        log.warning(
+            "Empty parse for query=%s period=%s (len=%s, rowPar=%s, rowImpar=%s)",
+            query,
+            period,
+            len(resp),
+            "resultadosRowPar" in resp,
+            "resultadosRowImpar" in resp,
+        )
+
     return parser.courses

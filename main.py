@@ -12,7 +12,7 @@ import sys
 
 
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 log = logging.getLogger()
 
 cookies = ""

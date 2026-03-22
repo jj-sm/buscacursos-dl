@@ -12,9 +12,25 @@ import binascii
 log = logging.getLogger("scraper")
 
 
+def _is_block_page(resp: str) -> bool:
+    return "Verificación de Seguridad" in resp or "challenge-container" in resp
+
+
+def _looks_like_html(resp: str) -> bool:
+    sample = resp[:2048].lower()
+    return "<html" in sample or "<!doctype html" in sample
+
 cache = {}
 cachefile = None
+session = requests.Session()
 
+try:
+    import cloudscraper
+    HAS_CLOUDSCRAPER = True
+    scraper = cloudscraper.create_scraper()
+except Exception:
+    HAS_CLOUDSCRAPER = False
+    scraper = None
 def load_cache():
     global cachefile
     
@@ -37,13 +53,24 @@ def add_to_cache(key: str, resp: str):
 def get_text_raw(cfg, url: str, key: str, fetchtext: Callable[[], str]):
     if not cfg.get("disable-cache"):
         if key in cache:
-            log.info("request to %s hit cache", url)
-            return cache[key]
+            cached = cache[key]
+            if not _looks_like_html(cached):
+                log.warning("ignoring cached non-html payload for %s", url)
+            if _is_block_page(cached):
+                log.warning("ignoring cached security page for %s", url)
+            else:
+                if _looks_like_html(cached):
+                    log.info("request to %s hit cache", url)
+                    return cached
 
     tries = 10
     while True:
         try:
             resp = fetchtext()
+            if not _looks_like_html(resp):
+                raise RuntimeError("non-html payload returned")
+            if _is_block_page(resp):
+                raise RuntimeError("security verification page returned")
             if not cfg.get("disable-cache"):
                 add_to_cache(key, resp)
             return resp
@@ -72,7 +99,32 @@ def get_text(cfg, query: str) -> str:
     })
 
     def fetch():
-        return requests.get(query, headers={"Cookie": cookies}).text
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "es-ES,es;q=0.9",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "none",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+            "DNT": "1",
+            "Referer": "https://buscacursos.uc.cl/",
+        }
+        if cookies:
+            headers["Cookie"] = cookies
+        # Try cloudscraper first if available (for Cloudflare protection)
+        if scraper:
+            try:
+                response = scraper.get(query, headers=headers, timeout=15)
+            except Exception:
+                response = session.get(query, headers=headers, timeout=15)
+        else:
+            response = session.get(query, headers=headers, timeout=15)
+        response.raise_for_status()
+        return response.text
 
     return get_text_raw(cfg, query, key, fetch)
 
@@ -87,6 +139,24 @@ def post_text(cfg, url: str, form_params: Dict[str, str]):
     })
 
     def post():
-        return requests.post(url, data=form_params, headers={"Cookie": cookies}).text
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "es-ES,es;q=0.9",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+            "DNT": "1",
+            "Referer": "https://buscacursos.uc.cl/",
+        }
+        if cookies:
+            headers["Cookie"] = cookies
+        response = session.post(url, data=form_params, headers=headers, timeout=15)
+        response.raise_for_status()
+        return response.text
 
     return get_text_raw(cfg, f"{url} & {form_params}", key, post)
