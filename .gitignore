@@ -7,6 +7,9 @@
 
 *.sqlite*
 .requestcache*
+*.lock
+stderr.txt
+stdout.txt
 
 # User-specific stuff
 .idea/**/workspace.xml
