@@ -1,12 +1,18 @@
-import os
-import traceback
-from typing import Callable, Dict
-import requests
-from time import sleep
-import logging
+import atexit
+import binascii
 import hashlib
 import json
-import binascii
+import logging
+import os
+import random
+import sqlite3
+import threading
+import traceback
+from time import sleep
+from typing import Callable, Dict, Optional
+
+import requests
+from requests.adapters import HTTPAdapter
 
 
 log = logging.getLogger("scraper")
@@ -18,42 +24,124 @@ def _is_block_page(resp: str) -> bool:
 
 def _looks_like_html(resp: str) -> bool:
     sample = resp[:2048].lower()
-    return "<html" in sample or "<!doctype html" in sample
+    return "<html" in sample or "<!doctype html" in sample or "<table" in sample
 
-cache = {}
-cachefile = None
+
+CACHE_DB_PATH = ".requestcache.sqlite"
+
+db_lock = threading.Lock()
+cache_db: Optional[sqlite3.Connection] = None
+
 session = requests.Session()
+adapter = HTTPAdapter(pool_connections=25, pool_maxsize=25)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
 
 try:
     import cloudscraper
+
     HAS_CLOUDSCRAPER = True
     scraper = cloudscraper.create_scraper()
+    scraper.mount("http://", HTTPAdapter(pool_connections=25, pool_maxsize=25))
+    scraper.mount("https://", HTTPAdapter(pool_connections=25, pool_maxsize=25))
 except Exception:
     HAS_CLOUDSCRAPER = False
     scraper = None
+
+
+def _close_cache_db():
+    global cache_db
+    if cache_db is not None:
+        cache_db.close()
+        cache_db = None
+
+
+aexit_registered = False
+
+
+def _ensure_cache_db() -> Optional[sqlite3.Connection]:
+    global cache_db
+    global aexit_registered
+
+    if cache_db is not None:
+        return cache_db
+
+    with db_lock:
+        if cache_db is None:
+            cache_db = sqlite3.connect(CACHE_DB_PATH, check_same_thread=False)
+            cache_db.execute("PRAGMA journal_mode=WAL")
+            cache_db.execute(
+                "CREATE TABLE IF NOT EXISTS request_cache (key TEXT PRIMARY KEY, resp TEXT NOT NULL)"
+            )
+            cache_db.commit()
+            if not aexit_registered:
+                atexit.register(_close_cache_db)
+                aexit_registered = True
+    return cache_db
+
+
 def load_cache():
-    global cachefile
-    
-    if os.path.exists(".requestcache"):
-        with open(".requestcache", 'r') as file:
+    conn = _ensure_cache_db()
+    if conn is None:
+        return
+
+    # One-time migration from legacy line-delimited cache file.
+    if not os.path.exists(".requestcache"):
+        return
+
+    migrated_flag = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='request_cache_migration'"
+    ).fetchone()
+    if migrated_flag:
+        return
+
+    try:
+        with open(".requestcache", "r") as file:
+            rows = []
             for line in file.readlines():
                 c = json.loads(line)
-                cache[c['key']] = c['resp']
-    cachefile = open(".requestcache", 'a')
+                if "key" in c and "resp" in c:
+                    rows.append((c["key"], c["resp"]))
+        if rows:
+            with db_lock:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO request_cache (key, resp) VALUES (?, ?)", rows
+                )
+                conn.execute("CREATE TABLE request_cache_migration (ok INTEGER NOT NULL)")
+                conn.execute("INSERT INTO request_cache_migration (ok) VALUES (1)")
+                conn.commit()
+            log.info("migrated %s cache entries from .requestcache to %s", len(rows), CACHE_DB_PATH)
+    except Exception:
+        log.warning("failed to migrate legacy .requestcache file")
+
+
+def get_from_cache(key: str) -> Optional[str]:
+    conn = _ensure_cache_db()
+    if conn is None:
+        return None
+    with db_lock:
+        row = conn.execute("SELECT resp FROM request_cache WHERE key=?", (key,)).fetchone()
+    if row:
+        return row[0]
+    return None
 
 
 def add_to_cache(key: str, resp: str):
-    cache[key] = resp
-    if cachefile:
-        json.dump({'key': key, 'resp': resp}, cachefile)
-        cachefile.write('\n')
-        cachefile.flush()
+    conn = _ensure_cache_db()
+    if conn is None:
+        return
+    with db_lock:
+        conn.execute(
+            "INSERT OR REPLACE INTO request_cache (key, resp) VALUES (?, ?)",
+            (key, resp),
+        )
+        conn.commit()
 
 
 def get_text_raw(cfg, url: str, key: str, fetchtext: Callable[[], str]):
     if not cfg.get("disable-cache"):
-        if key in cache:
-            cached = cache[key]
+        cached = get_from_cache(key)
+        if cached is not None:
             if not _looks_like_html(cached):
                 log.warning("ignoring cached non-html payload for %s", url)
             if _is_block_page(cached):
@@ -74,13 +162,23 @@ def get_text_raw(cfg, url: str, key: str, fetchtext: Callable[[], str]):
             if not cfg.get("disable-cache"):
                 add_to_cache(key, resp)
             return resp
-        except Exception:
+        except Exception as err:
             log.error(f"request to {url} failed:")
             log.error(traceback.format_exc())
             tries -= 1
-            sleep(1)
+
+            status = None
+            if isinstance(err, requests.HTTPError) and err.response is not None:
+                status = err.response.status_code
+
+            if status == 403:
+                # Small randomized backoff avoids rhythmic bursts that trigger anti-bot rules.
+                sleep(random.uniform(0.1, 0.5))
+            else:
+                sleep(1)
+
             if tries > 0:
-                log.log("retrying...")
+                log.warning("retrying...")
             else:
                 break
     raise Exception(f'too many tries to URL "{url}"')
