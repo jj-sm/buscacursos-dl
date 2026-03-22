@@ -59,11 +59,14 @@ if len(args) == 0:
     sys.exit()
 periods = args
 
+default_output_db = os.environ.get("SCRAPER_OUTPUT_DB", "scraper_data.sqlite")
+default_workers = os.environ.get("SCRAPER_WORKERS", "12")
+
 settings = {
     "batch_size": 100,
     "cookies": cookies,
-    "max-workers": int(vals.get("workers", "12")),
-    "output-db": vals.get("output-db", "scraper_data.sqlite"),
+    "max-workers": int(vals.get("workers", default_workers)),
+    "output-db": vals.get("output-db", default_output_db),
     "testmode": "test" in opts,
     "fetch-program": "skip-program" not in opts,
     "fetch-quota": "skip-quota" not in opts,

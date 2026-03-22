@@ -190,3 +190,19 @@ También puedes exportar una sola tabla con `--table`.
     }
 }
 ```
+
+## Ejecutar con Docker y schedule automático
+
+Puedes correr el scraper en un contenedor que periódicamente revisa y actualiza la base de datos SQLite.
+
+1. Copia el archivo `.env.example` a `.env` y ajusta los valores:
+    - `SCRAPER_PERIODS`: Lista separada por comas de periodos (o `catalogo`).
+    - `SCRAPER_INTERVAL_MINUTES`: Intervalo entre ejecuciones.
+    - `SCRAPER_OUTPUT_DB`: Ruta donde se persiste la base (montada en volumen `/data`).
+2. Construye y levanta el contenedor con Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+Los datos se guardan en el volumen `scraper_data` o en el path que montes en `/data`.
